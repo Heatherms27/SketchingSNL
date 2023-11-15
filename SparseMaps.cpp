@@ -21,7 +21,6 @@
 #include <KokkosKernels_IOUtils.hpp>
 #include <KokkosKernels_IOUtils.hpp>
 #include <Kokkos_Random.hpp>
-#include "SketchMatrix.h"
 //using namespace std;
 
 // Initialize data types for scalars, matrices, and vectors
@@ -40,6 +39,7 @@ void printHelp(){
   printf("  -seed <Int>        Set the random seed  \n");
   printf("  -help              Print this message \n");
 }
+
 
 int main(int argc, char* argv[])
 {
@@ -67,7 +67,7 @@ int main(int argc, char* argv[])
       printf("Number of nonzeros per column: %d\n", nnzPerCol);
     } else if (!strcmp(argv[i], "-seed")) {
       seed = atoi(argv[i+1]);
-      printf("Random seed set to: %d\n");
+      printf("Random seed set to: %d\n", seed);
     }
   }
   printf("-----------------------------------------------------\n");
@@ -89,50 +89,51 @@ int main(int argc, char* argv[])
   }
   printf("-----------------------------------------------------\n");
 
-  // Insert random -1's and 1's into the sketching matrix
-  std::default_random_engine generator;
-  std::uniform_int_distribution<int> distribution_row(0,rows-1);
-  std::uniform_int_distribution<int> distribution_val(0,1);
-  int randNum;
-
- /* Initialize Kokkos */
+  /* Initialize Kokkos */
   Kokkos::initialize(argc, argv);
-    
+
+  {
   // Set up the CSC for the SparseMaps matrix
-  ViewVectorType    SVals("SVals", nnzPerCol*cols);
+  ViewVectorType SVals("SVals", nnzPerCol*cols);
   ViewVectorTypeInt SRows("SRows", nnzPerCol*cols);
-  
-  Kokkos::parallel_for(nnzPerCol*cols, KOKKOS_LAMBDA(const int i) {
-      randNum = distribution_val(generator);
-      SVals(i) = 2*randNum-1;
-  }); 
 
-  Kokkos::fence();
+  // Set up the random number generator for Kokkos
+  Kokkos::Random_XorShift64_Pool<> random_pool(seed);
 
-  // Now insert indices of the rows for each column
-  
-  for (int i = 0; i < cols; i++) {
-    Kokkos::parallel_for(nnzPerCol, KOKKOS_LAMBDA(const int j) {
-      bool isUnique;
+  scalar_t value_scale = 1/sqrt(rows);
 
+  // Use the execution policy in parallel_for
+  Kokkos::parallel_for(nnzPerCol * cols, KOKKOS_LAMBDA(int i) {
+    auto generator = random_pool.get_state(i);  // Get the random state
+    SVals(i) = (2 * (generator.drand(0., 1.) < 0.5) - 1) * value_scale;
+    random_pool.free_state(generator);  // Free the random state
+  });
+
+  Kokkos::parallel_for(cols, KOKKOS_LAMBDA(int i) {
+    auto generator = random_pool.get_state(i);
+    bool isUnique;
+    int randNum;
+
+    for(int j = 0; j < nnzPerCol; j++) {
       do {
-        randNum = distribution_row(generator);
-        isUnique = true;
-        for (int k = i*nnzPerCol; k < i*nnzPerCol + j; k++) {
-          if (randNum == SRows(k)) {
-            isUnique = false;
-            break;
-          }
-        }
-      } while (!isUnique);
-      
-      SRows(i*nnzPerCol+j) = randNum;  
+	randNum = generator.urand(0, rows);
+	isUnique = true;
 
-    });
-  }
+	for(int k = i*nnzPerCol; k < i*nnzPerCol+j; k++) {
+	  if (randNum == SRows(k)) {
+	    isUnique = false;
+	    break;
+	  }
+	}
+      } while (!isUnique);
+      SRows(i*nnzPerCol + j) = randNum;
+    }
+
+    random_pool.free_state(generator); // Free the random state
+  });
 
   Kokkos::fence();
-
+  }
   Kokkos::finalize();
 
 return 0;

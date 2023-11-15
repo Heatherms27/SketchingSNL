@@ -1,7 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 #RUN BY ENTERING '. module_setup.sh'
-module load sems-cmake/3.23.1
-module load sems-gcc/10.1.0
+module load cmake/3.25.1
+module load gcc/12.2.0
+module load cuda/12.0.0
+module load openblas/0.3.23
 
 #set OMP settings
 export OMP_PROC_BIND=spread
